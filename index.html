@@ -270,7 +270,7 @@ function smoothCurve(xs, ys) {
         const t = minX + i * step;
         xnew.push(t);
         
-        // 使用 Catmull-Rom 樣條插值 (比 moving average 更平滑)
+        // 使用 Catmull-Rom 樣條插值
         let y = 0;
         let totalWeight = 0;
         const bandwidth = Math.max(3, Math.min(n, 8));
@@ -311,7 +311,6 @@ function generateIdealCurve() {
     const ys = [...IDEAL_FLOW];
     
     if (xs.length >= 4) {
-        // 使用同一套平滑函數，讓理想曲線也變平滑
         const result = smoothCurve(xs, ys);
         return result;
     }
@@ -719,7 +718,6 @@ class FlowMonitorApp {
         
         const ds = this.chart.data.datasets;
         
-        // 對流量數據做平滑處理，產生更平滑的曲線
         let xs = this.times.slice();
         let ys = this.flows.slice();
         
