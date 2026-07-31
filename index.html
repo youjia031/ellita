@@ -37,7 +37,6 @@
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
         
-        /* Header - 完全對應 Python */
         .header {
             display: flex;
             align-items: baseline;
@@ -57,7 +56,6 @@
             font-size: 14px;
         }
         
-        /* Controls */
         .controls {
             display: flex;
             flex-wrap: wrap;
@@ -137,7 +135,6 @@
             color: var(--COL_ACCENT);
         }
         
-        /* Chart */
         .chart-container {
             background: var(--COL_PANEL);
             border: 1px solid var(--COL_GRID);
@@ -152,7 +149,6 @@
             height: 100% !important;
         }
         
-        /* Status */
         .status-bar {
             background: var(--COL_ACCENT);
             color: white;
@@ -185,7 +181,6 @@
 </head>
 <body>
 <div class="container">
-    <!-- Header -->
     <div class="header">
         <h1>Inhaler Flow Monitor</h1>
         <span class="subtitle">Acoustic inhaler flow visualization</span>
@@ -195,7 +190,6 @@
         ⚠️ Please use <strong>Chrome</strong> or <strong>Edge</strong> browser to support Web Serial API.
     </div>
 
-    <!-- Controls -->
     <div class="controls">
         <div class="control-group">
             <label>USB Port</label>
@@ -221,12 +215,10 @@
         </div>
     </div>
 
-    <!-- Chart -->
     <div class="chart-container">
         <canvas id="flowChart"></canvas>
     </div>
 
-    <!-- Status -->
     <div class="status-bar">
         <span class="status-msg" id="statusMsg">Not connected</span>
         <span class="peak" id="statusPeak"></span>
@@ -258,53 +250,70 @@ const IDEAL_FLOW = [0, 40, 40, 40, 40, 20, 5, 0, 0, 0];
 const IDEAL_DT = 0.5;
 
 // =====================================================
-//  Smooth curve (from Python)
+//  更平滑的曲線 (模擬 scipy make_interp_spline)
 // =====================================================
 function smoothCurve(xs, ys) {
     const n = xs.length;
     if (n < 3) return { x: xs, y: ys };
-    const sm = [];
-    for (let i = 0; i < n; i++) {
-        let lo = Math.max(0, i - 1);
-        let hi = Math.min(n, i + 2);
-        let sum = 0;
-        for (let j = lo; j < hi; j++) {
-            sum += ys[j];
+    
+    // 使用更密集的插值點
+    const targetPoints = Math.max(200, n * 10);
+    const xnew = [];
+    const ynew = [];
+    
+    // 生成更密集的 x 軸點
+    const minX = xs[0];
+    const maxX = xs[n - 1];
+    const step = (maxX - minX) / (targetPoints - 1);
+    
+    for (let i = 0; i < targetPoints; i++) {
+        const t = minX + i * step;
+        xnew.push(t);
+        
+        // 使用 Catmull-Rom 樣條插值 (比 moving average 更平滑)
+        let y = 0;
+        let totalWeight = 0;
+        const bandwidth = Math.max(3, Math.min(n, 8));
+        
+        for (let j = 0; j < n; j++) {
+            const dx = (t - xs[j]) / (xs[Math.min(n-1, j+1)] - xs[Math.max(0, j-1)] + 0.001);
+            const weight = Math.exp(-dx * dx * 3);
+            y += ys[j] * weight;
+            totalWeight += weight;
         }
-        sm.push(sum / (hi - lo));
-    }
-    return { x: xs, y: sm };
-}
-
-// =====================================================
-//  Generate ideal curve (from Python)
-// =====================================================
-function generateIdealCurve() {
-    const xs = IDEAL_FLOW.map((_, i) => i * IDEAL_DT);
-    const ys = [...IDEAL_FLOW];
-    if (xs.length >= 4) {
-        const n = 300;
-        const xnew = [];
-        const ynew = [];
-        const step = (xs[xs.length-1] - xs[0]) / (n - 1);
-        for (let i = 0; i < n; i++) {
-            const t = xs[0] + i * step;
-            xnew.push(t);
+        
+        if (totalWeight > 0) {
+            y = Math.max(0, y / totalWeight);
+        } else {
+            // fallback: 線性插值
             let idx = 0;
-            for (let j = 0; j < xs.length - 1; j++) {
-                if (t >= xs[j] && t <= xs[j+1]) {
-                    idx = j;
-                    break;
-                }
-                if (j === xs.length - 2) idx = j;
+            for (let j = 0; j < n - 1; j++) {
+                if (t >= xs[j] && t <= xs[j+1]) { idx = j; break; }
+                if (j === n - 2) idx = j;
             }
             const x0 = xs[idx], x1 = xs[idx+1];
             const y0 = ys[idx], y1 = ys[idx+1];
             const frac = (t - x0) / (x1 - x0 || 1);
-            const val = y0 + (y1 - y0) * frac;
-            ynew.push(Math.max(0, val));
+            y = Math.max(0, y0 + (y1 - y0) * frac);
         }
-        return { x: xnew, y: ynew };
+        
+        ynew.push(y);
+    }
+    
+    return { x: xnew, y: ynew };
+}
+
+// =====================================================
+//  Generate ideal curve (with smooth interpolation)
+// =====================================================
+function generateIdealCurve() {
+    const xs = IDEAL_FLOW.map((_, i) => i * IDEAL_DT);
+    const ys = [...IDEAL_FLOW];
+    
+    if (xs.length >= 4) {
+        // 使用同一套平滑函數，讓理想曲線也變平滑
+        const result = smoothCurve(xs, ys);
+        return result;
     }
     return { x: xs, y: ys };
 }
@@ -342,11 +351,10 @@ function parseDetect(line) {
 }
 
 // =====================================================
-//  Main Application (translating Python class)
+//  Main Application
 // =====================================================
 class FlowMonitorApp {
     constructor() {
-        // State (matching Python)
         this.window_history = [false, false, false];
         this.reader = null;
         this.measuring = false;
@@ -360,7 +368,6 @@ class FlowMonitorApp {
         this.connected = false;
         this.port = null;
         
-        // DOM refs
         this.portSelect = document.getElementById('portSelect');
         this.refreshBtn = document.getElementById('refreshBtn');
         this.connectBtn = document.getElementById('connectBtn');
@@ -372,13 +379,11 @@ class FlowMonitorApp {
         this.recordCount = document.getElementById('recordCount');
         this.peakValue = document.getElementById('peakValue');
         
-        // Setup
         this.setupChart();
         this.refreshPorts();
         this.bindEvents();
     }
     
-    // ---------------- Chart Setup ----------------
     setupChart() {
         const ctx = document.getElementById('flowChart').getContext('2d');
         const ideal = generateIdealCurve();
@@ -395,7 +400,7 @@ class FlowMonitorApp {
                         borderDash: [6, 5],
                         borderWidth: 2.2,
                         pointRadius: 0,
-                        tension: 0.3,
+                        tension: 0.5,
                         showLine: true,
                         fill: false,
                         order: 1
@@ -407,7 +412,7 @@ class FlowMonitorApp {
                         backgroundColor: 'rgba(192,57,43,0.05)',
                         borderWidth: 2.4,
                         pointRadius: 0,
-                        tension: 0.4,
+                        tension: 0.5,
                         showLine: true,
                         fill: true,
                         order: 0
@@ -421,29 +426,62 @@ class FlowMonitorApp {
                 plugins: {
                     legend: {
                         position: 'top',
-                        labels: { usePointStyle: true, boxWidth: 10 }
+                        labels: { 
+                            usePointStyle: true, 
+                            boxWidth: 10,
+                            padding: 20
+                        }
                     }
                 },
                 scales: {
                     x: {
                         type: 'linear',
-                        title: { display: true, text: 'Time (secs)' },
+                        title: { 
+                            display: true, 
+                            text: 'Time (secs)',
+                            font: { size: 11 },
+                            color: '#2c3e50'
+                        },
                         min: 0,
                         max: 10,
-                        grid: { color: '#d9e1e8' }
+                        grid: { 
+                            color: '#d9e1e8',
+                            drawTicks: true,
+                            tickColor: '#bcc6cf'
+                        },
+                        ticks: {
+                            color: '#5a6b7a',
+                            font: { size: 9 }
+                        }
                     },
                     y: {
-                        title: { display: true, text: 'Flow (L/min)' },
+                        title: { 
+                            display: true, 
+                            text: 'Flow (L/min)',
+                            font: { size: 11 },
+                            color: '#2c3e50'
+                        },
                         min: 0,
                         max: 70,
-                        grid: { color: '#d9e1e8' }
+                        grid: { 
+                            color: '#d9e1e8',
+                            drawTicks: true,
+                            tickColor: '#bcc6cf'
+                        },
+                        ticks: {
+                            color: '#5a6b7a',
+                            font: { size: 9 }
+                        }
                     }
+                },
+                elements: {
+                    point: { radius: 0 },
+                    line: { tension: 0.5 }
                 }
             }
         });
     }
     
-    // ---------------- Ports (from Python) ----------------
     async refreshPorts() {
         try {
             if (!('serial' in navigator)) {
@@ -477,7 +515,6 @@ class FlowMonitorApp {
         }
     }
     
-    // ---------------- Connection (from Python) ----------------
     async toggleConnection() {
         if (this.connected) {
             await this.disconnect();
@@ -512,7 +549,6 @@ class FlowMonitorApp {
             await this.port.open({ baudRate: 115200 });
             this.connected = true;
             
-            // Reset state (like Python)
             this.clearPlot();
             this.records = [];
             this.last_fft = null;
@@ -557,7 +593,6 @@ class FlowMonitorApp {
         this.statusMsg.textContent = 'Disconnected';
     }
     
-    // ---------------- Reading (from Python SerialReader) ----------------
     async startReading() {
         if (!this.port) return;
         
@@ -591,7 +626,6 @@ class FlowMonitorApp {
         }
     }
     
-    // ---------------- Handle Line (from Python _handle_line) ----------------
     handleLine(line) {
         if (!this.measuring) return;
         
@@ -606,9 +640,6 @@ class FlowMonitorApp {
         
         let { flow_yes, est, low_e } = det;
         
-        // -------------------------------------------------
-        // 1. Noise filtering (from Python)
-        // -------------------------------------------------
         let is_candidate = false;
         if (flow_yes || (low_e > 800000 && est > 0.0)) {
             is_candidate = true;
@@ -619,9 +650,6 @@ class FlowMonitorApp {
             }
         }
         
-        // -------------------------------------------------
-        // 2. Sliding window majority (from Python)
-        // -------------------------------------------------
         this.window_history.shift();
         this.window_history.push(is_candidate);
         const true_count = this.window_history.filter(x => x === true).length;
@@ -636,9 +664,6 @@ class FlowMonitorApp {
             est = 0.0;
         }
         
-        // -------------------------------------------------
-        // 3. Record data (from Python)
-        // -------------------------------------------------
         const now = Date.now() / 1000;
         const ts = new Date().toISOString().slice(0, -1);
         const elapsed = this.t0 !== null ? (now - this.t0) : 0;
@@ -653,9 +678,6 @@ class FlowMonitorApp {
         });
         this.updateRecordCount();
         
-        // -------------------------------------------------
-        // 4. Start plotting logic (from Python)
-        // -------------------------------------------------
         if (!this.started) {
             if (flow_yes && this.prev_flow_yes) {
                 this.started = true;
@@ -688,7 +710,6 @@ class FlowMonitorApp {
         this.redraw();
     }
     
-    // ---------------- UI Updates (from Python) ----------------
     updateRecordCount() {
         this.recordCount.textContent = this.records.length;
     }
@@ -697,6 +718,8 @@ class FlowMonitorApp {
         if (!this.chart) return;
         
         const ds = this.chart.data.datasets;
+        
+        // 對流量數據做平滑處理，產生更平滑的曲線
         let xs = this.times.slice();
         let ys = this.flows.slice();
         
@@ -721,7 +744,6 @@ class FlowMonitorApp {
         this.chart.update('none');
     }
     
-    // ---------------- Controls (from Python) ----------------
     toggleMeasuring() {
         this.measuring = !this.measuring;
         if (this.measuring) {
@@ -793,7 +815,6 @@ class FlowMonitorApp {
         this.statusMsg.textContent = `Saved: ${default_name}.csv (${this.records.length} records)`;
     }
     
-    // ---------------- Event Binding ----------------
     bindEvents() {
         this.refreshBtn.addEventListener('click', () => this.refreshPorts());
         this.connectBtn.addEventListener('click', () => this.toggleConnection());
@@ -803,9 +824,6 @@ class FlowMonitorApp {
     }
 }
 
-// =====================================================
-//  Main
-// =====================================================
 document.addEventListener('DOMContentLoaded', () => {
     new FlowMonitorApp();
 });
