@@ -258,53 +258,30 @@ const IDEAL_FLOW = [0, 40, 40, 40, 40, 20, 5, 0, 0, 0];
 const IDEAL_DT = 0.5;
 
 // =====================================================
-//  最簡平滑函數：只做移動平均，確保起點終點不變
+//  平滑曲線 — 完全對應 Python 的 3 點移動平均
 // =====================================================
 function smoothCurve(xs, ys) {
     const n = xs.length;
     if (n < 3) return { x: xs, y: ys };
-    
-    // 使用加權移動平均，保留起點終點
-    const windowSize = Math.min(5, Math.floor(n / 3) + 1);
     const sm = [];
-    const halfWin = Math.floor(windowSize / 2);
-    
     for (let i = 0; i < n; i++) {
-        // 強制起點和終點保持原值
-        if (i === 0 || i === n - 1) {
-            sm.push(ys[i]);
-            continue;
-        }
-        
+        let lo = Math.max(0, i - 1);
+        let hi = Math.min(n, i + 2);
         let sum = 0;
-        let count = 0;
-        const start = Math.max(0, i - halfWin);
-        const end = Math.min(n, i + halfWin + 1);
-        for (let j = start; j < end; j++) {
-            // 邊界附近的點權重降低，避免邊界被拉離
-            let weight = 1;
-            if (j === 0 || j === n - 1) weight = 0.3;
-            else if (j === 1 || j === n - 2) weight = 0.6;
-            sum += ys[j] * weight;
-            count += weight;
+        for (let j = lo; j < hi; j++) {
+            sum += ys[j];
         }
-        sm.push(sum / count);
+        sm.push(sum / (hi - lo));
     }
     return { x: xs, y: sm };
 }
 
 // =====================================================
-//  產生理想曲線
+//  理想曲線 — 完全對應 Python
 // =====================================================
 function generateIdealCurve() {
     const xs = IDEAL_FLOW.map((_, i) => i * IDEAL_DT);
     const ys = [...IDEAL_FLOW];
-    
-    // 對理想曲線做平滑，保留起點終點
-    if (xs.length >= 4) {
-        const result = smoothCurve(xs, ys);
-        return result;
-    }
     return { x: xs, y: ys };
 }
 
@@ -391,7 +368,7 @@ class FlowMonitorApp {
                         borderDash: [6, 5],
                         borderWidth: 2.2,
                         pointRadius: 0,
-                        tension: 0.3,
+                        tension: 0.1,
                         showLine: true,
                         fill: false,
                         order: 1
@@ -403,7 +380,7 @@ class FlowMonitorApp {
                         backgroundColor: 'rgba(192,57,43,0.05)',
                         borderWidth: 2.4,
                         pointRadius: 0,
-                        tension: 0.3,
+                        tension: 0.1,
                         showLine: true,
                         fill: true,
                         order: 0
@@ -417,11 +394,7 @@ class FlowMonitorApp {
                 plugins: {
                     legend: {
                         position: 'top',
-                        labels: { 
-                            usePointStyle: true, 
-                            boxWidth: 10,
-                            padding: 20
-                        }
+                        labels: { usePointStyle: true, boxWidth: 10, padding: 20 }
                     }
                 },
                 scales: {
@@ -443,7 +416,7 @@ class FlowMonitorApp {
                 },
                 elements: {
                     point: { radius: 0 },
-                    line: { tension: 0.3 }
+                    line: { tension: 0.1 }
                 }
             }
         });
