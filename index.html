@@ -251,38 +251,48 @@ const IDEAL_DT = 0.5;
 
 // =====================================================
 //  更平滑的曲線 (模擬 scipy make_interp_spline)
+//  產生圓頂效果 (peak rounding)
 // =====================================================
 function smoothCurve(xs, ys) {
     const n = xs.length;
     if (n < 3) return { x: xs, y: ys };
     
-    // 使用更密集的插值點
-    const targetPoints = Math.max(200, n * 10);
+    // 使用更密集的插值點 - 增加 20 倍密度以產生平滑圓頂
+    const targetPoints = Math.max(300, n * 20);
     const xnew = [];
     const ynew = [];
     
-    // 生成更密集的 x 軸點
     const minX = xs[0];
     const maxX = xs[n - 1];
     const step = (maxX - minX) / (targetPoints - 1);
+    
+    // 預計算原始數據的相鄰間距，用於自適應權重
+    const dxs = [];
+    for (let i = 0; i < n - 1; i++) {
+        dxs.push(Math.max(xs[i+1] - xs[i], 0.001));
+    }
     
     for (let i = 0; i < targetPoints; i++) {
         const t = minX + i * step;
         xnew.push(t);
         
-        // 使用 Catmull-Rom 樣條插值
+        // 使用 Catmull-Rom 樣條插值 (自適應權重，產生圓頂效果)
         let y = 0;
         let totalWeight = 0;
-        const bandwidth = Math.max(3, Math.min(n, 8));
+        
+        // 自適應帶寬：在數據點密集時使用較小的帶寬，稀疏時使用較大的帶寬
+        const avgDx = dxs.reduce((a, b) => a + b, 0) / dxs.length;
+        const bandwidth = Math.max(3, Math.min(n, Math.max(5, 12 / (avgDx + 0.1))));
         
         for (let j = 0; j < n; j++) {
+            // 使用高斯權重，讓曲線更平滑
             const dx = (t - xs[j]) / (xs[Math.min(n-1, j+1)] - xs[Math.max(0, j-1)] + 0.001);
-            const weight = Math.exp(-dx * dx * 3);
+            const weight = Math.exp(-dx * dx * 2.5);
             y += ys[j] * weight;
             totalWeight += weight;
         }
         
-        if (totalWeight > 0) {
+        if (totalWeight > 0.001) {
             y = Math.max(0, y / totalWeight);
         } else {
             // fallback: 線性插值
@@ -304,13 +314,14 @@ function smoothCurve(xs, ys) {
 }
 
 // =====================================================
-//  Generate ideal curve (with smooth interpolation)
+//  產生理想曲線（套用平滑）
 // =====================================================
 function generateIdealCurve() {
     const xs = IDEAL_FLOW.map((_, i) => i * IDEAL_DT);
     const ys = [...IDEAL_FLOW];
     
     if (xs.length >= 4) {
+        // 先做平滑插值，產生理想曲線的圓頂
         const result = smoothCurve(xs, ys);
         return result;
     }
@@ -718,6 +729,7 @@ class FlowMonitorApp {
         
         const ds = this.chart.data.datasets;
         
+        // 對流量數據做平滑處理，產生圓頂曲線
         let xs = this.times.slice();
         let ys = this.flows.slice();
         
