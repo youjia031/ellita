@@ -258,87 +258,12 @@ const IDEAL_FLOW = [0, 40, 40, 40, 40, 20, 5, 0, 0, 0];
 const IDEAL_DT = 0.5;
 
 // =====================================================
-//  平滑曲線 — Catmull-Rom 樣條插值（保留起點終點）
-// =====================================================
-function smoothCurve(xs, ys) {
-    const n = xs.length;
-    if (n < 3) return { x: xs, y: ys };
-    
-    // 增加 10 倍插值點
-    const targetPoints = n * 20;
-    const xnew = [];
-    const ynew = [];
-    
-    const minX = xs[0];
-    const maxX = xs[n - 1];
-    const step = (maxX - minX) / (targetPoints - 1);
-    
-    // 預計算相鄰間距
-    const dxs = [];
-    for (let i = 0; i < n - 1; i++) {
-        dxs.push(Math.max(xs[i+1] - xs[i], 0.001));
-    }
-    const avgDx = dxs.reduce((a, b) => a + b, 0) / dxs.length;
-    const h = Math.max(avgDx * 0.5, 0.01);
-    
-    // 確保起點和終點被保留
-    const firstY = ys[0];
-    const lastY = ys[n - 1];
-    
-    for (let i = 0; i < targetPoints; i++) {
-        const t = minX + i * step;
-        xnew.push(t);
-        
-        // 強制起點和終點
-        if (i === 0) { ynew.push(firstY); continue; }
-        if (i === targetPoints - 1) { ynew.push(lastY); continue; }
-        
-        // Catmull-Rom 樣條插值（使用高斯權重）
-        let y = 0;
-        let totalWeight = 0;
-        
-        // 自適應帶寬：讓曲線平滑但不失真
-        const bandwidth = Math.max(2, Math.min(n - 1, Math.round(6 / (avgDx + 0.1))));
-        
-        for (let j = 0; j < n; j++) {
-            const dx = (t - xs[j]) / h;
-            const weight = Math.exp(-dx * dx * 2.0);
-            y += ys[j] * weight;
-            totalWeight += weight;
-        }
-        
-        if (totalWeight > 0.0001) {
-            y = Math.max(0, y / totalWeight);
-        } else {
-            // fallback: 線性插值
-            let idx = 0;
-            for (let j = 0; j < n - 1; j++) {
-                if (t >= xs[j] && t <= xs[j+1]) { idx = j; break; }
-                if (j === n - 2) idx = j;
-            }
-            const x0 = xs[idx], x1 = xs[idx+1];
-            const y0 = ys[idx], y1 = ys[idx+1];
-            const frac = (t - x0) / (x1 - x0 || 1);
-            y = Math.max(0, y0 + (y1 - y0) * frac);
-        }
-        
-        ynew.push(y);
-    }
-    
-    return { x: xnew, y: ynew };
-}
-
-// =====================================================
-//  理想曲線 — 套用平滑（產生圓潤頂端）
+//  平滑曲線 — 只用 Chart.js 的 tension 做三次樣條插值
+//  完全不改變數據點，讓 Chart.js 處理平滑
 // =====================================================
 function generateIdealCurve() {
     const xs = IDEAL_FLOW.map((_, i) => i * IDEAL_DT);
     const ys = [...IDEAL_FLOW];
-    
-    if (xs.length >= 4) {
-        // 直接使用 smoothCurve 產生平滑曲線
-        return smoothCurve(xs, ys);
-    }
     return { x: xs, y: ys };
 }
 
@@ -414,7 +339,7 @@ class FlowMonitorApp {
         const ideal = generateIdealCurve();
         
         this.chart = new Chart(ctx, {
-            type: 'scatter',
+            type: 'line',
             data: {
                 datasets: [
                     {
@@ -425,10 +350,12 @@ class FlowMonitorApp {
                         borderDash: [6, 5],
                         borderWidth: 2.2,
                         pointRadius: 0,
-                        tension: 0.3,
+                        tension: 0.4,      // ← 關鍵！三次樣條插值
                         showLine: true,
                         fill: false,
-                        order: 1
+                        order: 1,
+                        spanGaps: false,
+                        stepped: false,
                     },
                     {
                         label: 'Patient',
@@ -437,10 +364,12 @@ class FlowMonitorApp {
                         backgroundColor: 'rgba(192,57,43,0.05)',
                         borderWidth: 2.4,
                         pointRadius: 0,
-                        tension: 0.3,
+                        tension: 0.4,      // ← 同樣平滑
                         showLine: true,
                         fill: true,
-                        order: 0
+                        order: 0,
+                        spanGaps: false,
+                        stepped: false,
                     }
                 ]
             },
@@ -473,7 +402,11 @@ class FlowMonitorApp {
                 },
                 elements: {
                     point: { radius: 0 },
-                    line: { tension: 0.3 }
+                    line: {
+                        tension: 0.4,
+                        borderJoinStyle: 'round',
+                        capBezierPoints: true,
+                    }
                 }
             }
         });
@@ -699,14 +632,11 @@ class FlowMonitorApp {
     redraw() {
         if (!this.chart) return;
         const ds = this.chart.data.datasets;
-        let xs = this.times.slice();
-        let ys = this.flows.slice();
-        if (xs.length >= 3) {
-            const smoothed = smoothCurve(xs, ys);
-            xs = smoothed.x;
-            ys = smoothed.y;
-        }
+        // 直接使用原始數據點，Chart.js 會用 tension 做三次樣條插值
+        const xs = this.times.slice();
+        const ys = this.flows.slice();
         ds[1].data = xs.map((x, i) => ({ x, y: ys[i] || 0 }));
+        
         if (this.times.length > 0) {
             const xmax = Math.max(10, this.times[this.times.length - 1] + 1);
             this.chart.options.scales.x.max = xmax;
