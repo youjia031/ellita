@@ -6,9 +6,6 @@
     <title>Inhaler Flow Monitor</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <style>
-        /* =====================================================
-           Academic color scheme (from Python)
-           ===================================================== */
         :root {
             --COL_BG: #f4f6f8;
             --COL_PANEL: #ffffff;
@@ -19,7 +16,6 @@
             --COL_GRID: #d9e1e8;
             --FONT_FAMILY: "Segoe UI";
         }
-        
         * { box-sizing: border-box; }
         body {
             font-family: var(--FONT_FAMILY), sans-serif;
@@ -27,7 +23,6 @@
             margin: 0;
             padding: 20px;
         }
-        
         .container {
             max-width: 1040px;
             margin: 0 auto;
@@ -36,7 +31,6 @@
             padding: 20px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
-        
         .header {
             display: flex;
             align-items: baseline;
@@ -55,7 +49,6 @@
             color: #7f8c8d;
             font-size: 14px;
         }
-        
         .controls {
             display: flex;
             flex-wrap: wrap;
@@ -117,7 +110,6 @@
             opacity: 0.5;
             cursor: not-allowed;
         }
-        
         .stats {
             display: flex;
             gap: 24px;
@@ -134,7 +126,6 @@
         .stats strong {
             color: var(--COL_ACCENT);
         }
-        
         .chart-container {
             background: var(--COL_PANEL);
             border: 1px solid var(--COL_GRID);
@@ -148,7 +139,6 @@
             width: 100% !important;
             height: 100% !important;
         }
-        
         .status-bar {
             background: var(--COL_ACCENT);
             color: white;
@@ -164,7 +154,6 @@
         .status-bar .peak {
             font-weight: 600;
         }
-        
         .compat-warning {
             background: #fff3cd;
             color: #856404;
@@ -197,18 +186,15 @@
             <button id="refreshBtn">Refresh</button>
             <button id="connectBtn" class="primary">Connect</button>
         </div>
-        
         <div class="control-group">
             <label>Patient ID</label>
             <input id="patientInput" placeholder="e.g. P001" value="Demo" style="width:120px;">
         </div>
-        
         <div class="control-group">
             <button id="measureBtn">Start</button>
             <button id="clearBtn">Clear</button>
             <button id="saveBtn" class="primary">Save CSV</button>
         </div>
-        
         <div class="stats">
             <span>Records: <strong id="recordCount">0</strong></span>
             <span>Peak: <strong id="peakValue">—</strong> L/min</span>
@@ -255,7 +241,6 @@ async function sendLog(action, data = {}) {
     const warning = document.getElementById('compatWarning');
     const connectBtn = document.getElementById('connectBtn');
     const statusMsg = document.getElementById('statusMsg');
-    
     if (!('serial' in navigator)) {
         warning.classList.add('show');
         connectBtn.disabled = true;
@@ -273,73 +258,39 @@ const IDEAL_FLOW = [0, 40, 40, 40, 40, 20, 5, 0, 0, 0];
 const IDEAL_DT = 0.5;
 
 // =====================================================
-//  平滑曲線（強制起點和終點固定）
+//  最簡平滑函數：只做移動平均，確保起點終點不變
 // =====================================================
 function smoothCurve(xs, ys) {
     const n = xs.length;
     if (n < 3) return { x: xs, y: ys };
     
-    const targetPoints = Math.max(300, n * 20);
-    const xnew = [];
-    const ynew = [];
+    // 使用加權移動平均，保留起點終點
+    const windowSize = Math.min(5, Math.floor(n / 3) + 1);
+    const sm = [];
+    const halfWin = Math.floor(windowSize / 2);
     
-    const minX = xs[0];
-    const maxX = xs[n - 1];
-    const step = (maxX - minX) / (targetPoints - 1);
-    
-    const dxs = [];
-    for (let i = 0; i < n - 1; i++) {
-        dxs.push(Math.max(xs[i+1] - xs[i], 0.001));
-    }
-    const avgDx = dxs.reduce((a, b) => a + b, 0) / dxs.length;
-    const bandwidth = Math.max(3, Math.min(n, Math.max(5, 12 / (avgDx + 0.1))));
-    
-    const firstY = ys[0];
-    const lastY = ys[n - 1];
-    
-    for (let i = 0; i < targetPoints; i++) {
-        const t = minX + i * step;
-        xnew.push(t);
-        
-        // 強制起點和終點固定在原始值
-        if (i === 0) {
-            ynew.push(firstY);
-            continue;
-        }
-        if (i === targetPoints - 1) {
-            ynew.push(lastY);
+    for (let i = 0; i < n; i++) {
+        // 強制起點和終點保持原值
+        if (i === 0 || i === n - 1) {
+            sm.push(ys[i]);
             continue;
         }
         
-        let y = 0;
-        let totalWeight = 0;
-        
-        for (let j = 0; j < n; j++) {
-            const dx = (t - xs[j]) / (xs[Math.min(n-1, j+1)] - xs[Math.max(0, j-1)] + 0.001);
-            const weight = Math.exp(-dx * dx * 2.5);
-            y += ys[j] * weight;
-            totalWeight += weight;
+        let sum = 0;
+        let count = 0;
+        const start = Math.max(0, i - halfWin);
+        const end = Math.min(n, i + halfWin + 1);
+        for (let j = start; j < end; j++) {
+            // 邊界附近的點權重降低，避免邊界被拉離
+            let weight = 1;
+            if (j === 0 || j === n - 1) weight = 0.3;
+            else if (j === 1 || j === n - 2) weight = 0.6;
+            sum += ys[j] * weight;
+            count += weight;
         }
-        
-        if (totalWeight > 0.001) {
-            y = Math.max(0, y / totalWeight);
-        } else {
-            // fallback: 線性插值
-            let idx = 0;
-            for (let j = 0; j < n - 1; j++) {
-                if (t >= xs[j] && t <= xs[j+1]) { idx = j; break; }
-                if (j === n - 2) idx = j;
-            }
-            const x0 = xs[idx], x1 = xs[idx+1];
-            const y0 = ys[idx], y1 = ys[idx+1];
-            const frac = (t - x0) / (x1 - x0 || 1);
-            y = Math.max(0, y0 + (y1 - y0) * frac);
-        }
-        
-        ynew.push(y);
+        sm.push(sum / count);
     }
-    
-    return { x: xnew, y: ynew };
+    return { x: xs, y: sm };
 }
 
 // =====================================================
@@ -349,6 +300,7 @@ function generateIdealCurve() {
     const xs = IDEAL_FLOW.map((_, i) => i * IDEAL_DT);
     const ys = [...IDEAL_FLOW];
     
+    // 對理想曲線做平滑，保留起點終點
     if (xs.length >= 4) {
         const result = smoothCurve(xs, ys);
         return result;
@@ -420,7 +372,6 @@ class FlowMonitorApp {
         this.setupChart();
         this.refreshPorts();
         this.bindEvents();
-
         sendLog('頁面載入', { version: '1.0', type: 'Ellita' });
     }
     
@@ -440,7 +391,7 @@ class FlowMonitorApp {
                         borderDash: [6, 5],
                         borderWidth: 2.2,
                         pointRadius: 0,
-                        tension: 0.5,
+                        tension: 0.3,
                         showLine: true,
                         fill: false,
                         order: 1
@@ -452,7 +403,7 @@ class FlowMonitorApp {
                         backgroundColor: 'rgba(192,57,43,0.05)',
                         borderWidth: 2.4,
                         pointRadius: 0,
-                        tension: 0.5,
+                        tension: 0.3,
                         showLine: true,
                         fill: true,
                         order: 0
@@ -476,47 +427,23 @@ class FlowMonitorApp {
                 scales: {
                     x: {
                         type: 'linear',
-                        title: { 
-                            display: true, 
-                            text: 'Time (secs)',
-                            font: { size: 11 },
-                            color: '#2c3e50'
-                        },
+                        title: { display: true, text: 'Time (secs)', font: { size: 11 }, color: '#2c3e50' },
                         min: 0,
                         max: 10,
-                        grid: { 
-                            color: '#d9e1e8',
-                            drawTicks: true,
-                            tickColor: '#bcc6cf'
-                        },
-                        ticks: {
-                            color: '#5a6b7a',
-                            font: { size: 9 }
-                        }
+                        grid: { color: '#d9e1e8', drawTicks: true, tickColor: '#bcc6cf' },
+                        ticks: { color: '#5a6b7a', font: { size: 9 } }
                     },
                     y: {
-                        title: { 
-                            display: true, 
-                            text: 'Flow (L/min)',
-                            font: { size: 11 },
-                            color: '#2c3e50'
-                        },
+                        title: { display: true, text: 'Flow (L/min)', font: { size: 11 }, color: '#2c3e50' },
                         min: 0,
                         max: 70,
-                        grid: { 
-                            color: '#d9e1e8',
-                            drawTicks: true,
-                            tickColor: '#bcc6cf'
-                        },
-                        ticks: {
-                            color: '#5a6b7a',
-                            font: { size: 9 }
-                        }
+                        grid: { color: '#d9e1e8', drawTicks: true, tickColor: '#bcc6cf' },
+                        ticks: { color: '#5a6b7a', font: { size: 9 } }
                     }
                 },
                 elements: {
                     point: { radius: 0 },
-                    line: { tension: 0.5 }
+                    line: { tension: 0.3 }
                 }
             }
         });
@@ -569,9 +496,7 @@ class FlowMonitorApp {
             if (!('serial' in navigator)) {
                 throw new Error('Web Serial API not supported. Please use Chrome or Edge.');
             }
-            
             let ports = await navigator.serial.getPorts();
-            
             if (ports.length === 0) {
                 this.statusMsg.textContent = 'Please select your USB device from the popup...';
                 const newPort = await navigator.serial.requestPort();
@@ -586,11 +511,9 @@ class FlowMonitorApp {
                     return;
                 }
             }
-            
             this.port = ports[0];
             await this.port.open({ baudRate: 115200 });
             this.connected = true;
-            
             this.clearPlot();
             this.records = [];
             this.last_fft = null;
@@ -599,16 +522,13 @@ class FlowMonitorApp {
             this.updateRecordCount();
             this.prev_flow_yes = false;
             this.window_history = [false, false, false];
-            
             this.connectBtn.textContent = 'Disconnect';
             this.connectBtn.className = 'danger';
             this.portSelect.disabled = true;
             this.refreshBtn.disabled = true;
             this.statusMsg.textContent = '✅ Connected. Waiting for 2 consecutive Flow=YES to start plotting...';
-            
             sendLog('連線成功');
             this.startReading();
-            
         } catch (e) {
             this.statusMsg.textContent = `❌ Connection failed: ${e.message}`;
             console.error('Connection error:', e);
@@ -640,22 +560,18 @@ class FlowMonitorApp {
     
     async startReading() {
         if (!this.port) return;
-        
         const reader = this.port.readable.getReader();
         this.reader = reader;
         const decoder = new TextDecoder('utf-8');
         let buffer = '';
-        
         try {
             while (true) {
                 const { value, done } = await reader.read();
                 if (done) break;
-                
                 const chunk = decoder.decode(value, { stream: true });
                 buffer += chunk;
                 const lines = buffer.split('\n');
                 buffer = lines.pop() || '';
-                
                 for (const line of lines) {
                     const trimmed = line.trim();
                     if (trimmed) {
@@ -673,18 +589,14 @@ class FlowMonitorApp {
     
     handleLine(line) {
         if (!this.measuring) return;
-        
         const fft = parseFFT(line);
         if (fft) {
             this.last_fft = fft;
             return;
         }
-        
         const det = parseDetect(line);
         if (!det) return;
-        
         let { flow_yes, est, low_e } = det;
-        
         let is_candidate = false;
         if (flow_yes || (low_e > 800000 && est > 0.0)) {
             is_candidate = true;
@@ -694,11 +606,9 @@ class FlowMonitorApp {
                 is_candidate = false;
             }
         }
-        
         this.window_history.shift();
         this.window_history.push(is_candidate);
         const true_count = this.window_history.filter(x => x === true).length;
-        
         if (true_count >= 2) {
             flow_yes = true;
             if (est === 0.0 && low_e > 1000000) {
@@ -708,11 +618,9 @@ class FlowMonitorApp {
             flow_yes = false;
             est = 0.0;
         }
-        
         const now = Date.now() / 1000;
         const ts = new Date().toISOString().slice(0, -1);
         const elapsed = this.t0 !== null ? (now - this.t0) : 0;
-        
         this.records.push({
             timestamp: ts,
             elapsed: elapsed,
@@ -722,7 +630,6 @@ class FlowMonitorApp {
             fft: this.last_fft || {}
         });
         this.updateRecordCount();
-        
         if (!this.started) {
             if (flow_yes && this.prev_flow_yes) {
                 this.started = true;
@@ -748,7 +655,6 @@ class FlowMonitorApp {
             this.prev_flow_yes = flow_yes;
             return;
         }
-        
         this.prev_flow_yes = flow_yes;
         const t = now - this.t0;
         this.times.push(t);
@@ -762,20 +668,15 @@ class FlowMonitorApp {
     
     redraw() {
         if (!this.chart) return;
-        
         const ds = this.chart.data.datasets;
-        
         let xs = this.times.slice();
         let ys = this.flows.slice();
-        
         if (xs.length >= 3) {
             const smoothed = smoothCurve(xs, ys);
             xs = smoothed.x;
             ys = smoothed.y;
         }
-        
         ds[1].data = xs.map((x, i) => ({ x, y: ys[i] || 0 }));
-        
         if (this.times.length > 0) {
             const xmax = Math.max(10, this.times[this.times.length - 1] + 1);
             this.chart.options.scales.x.max = xmax;
@@ -813,7 +714,6 @@ class FlowMonitorApp {
         this.prev_flow_yes = false;
         this.records = [];
         this.last_fft = null;
-        
         if (this.chart) {
             this.chart.data.datasets[1].data = [];
             this.chart.options.scales.x.max = 10;
@@ -831,14 +731,11 @@ class FlowMonitorApp {
             alert('No data to save.\nPlease connect and collect data first.');
             return;
         }
-        
         const patient = this.patientInput.value.trim() || 'unknown';
         const default_name = patient ? `inhaler_data_${patient}` : 'inhaler_data';
-        
         let csv = 'patient_id,timestamp,elapsed_s,flow,est_flow_Lpm,low_energy,';
         for (let k = 1; k <= 20; k++) csv += `${k}kHz,`;
         csv = csv.slice(0, -1) + '\n';
-        
         for (const r of this.records) {
             const row = [
                 patient,
@@ -853,13 +750,11 @@ class FlowMonitorApp {
             }
             csv += row.join(',') + '\n';
         }
-        
         const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8-sig' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
         link.download = `${default_name}.csv`;
         link.click();
-        
         this.statusMsg.textContent = `Saved: ${default_name}.csv (${this.records.length} records)`;
         sendLog('儲存 CSV', { patient, recordCount: this.records.length });
     }
