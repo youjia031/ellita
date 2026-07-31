@@ -227,6 +227,28 @@
 
 <script>
 // ============================================================
+//  Log 功能（跟其他網頁完全一樣的寫法）
+// ============================================================
+async function sendLog(action, data = {}) {
+    try {
+        const response = await fetch('/api/log', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: action,
+                data: data,
+                url: window.location.href,
+                timestamp: new Date().toISOString()
+            })
+        });
+        const result = await response.json();
+        console.log('✅ Log 已發送:', action, result);
+    } catch (e) {
+        console.log('⚠️ Log 發送失敗（不影響主功能）:', e.message);
+    }
+}
+
+// ============================================================
 // 檢查瀏覽器支援
 // ============================================================
 (function checkCompatibility() {
@@ -240,6 +262,7 @@
         connectBtn.textContent = 'Not Supported';
         statusMsg.textContent = '⚠️ Please use Chrome or Edge browser';
         console.warn('Web Serial API not supported');
+        sendLog('瀏覽器不支援 Web Serial API');
     }
 })();
 
@@ -257,7 +280,6 @@ function smoothCurve(xs, ys) {
     const n = xs.length;
     if (n < 3) return { x: xs, y: ys };
     
-    // 使用更密集的插值點 - 增加 20 倍密度以產生平滑圓頂
     const targetPoints = Math.max(300, n * 20);
     const xnew = [];
     const ynew = [];
@@ -266,7 +288,6 @@ function smoothCurve(xs, ys) {
     const maxX = xs[n - 1];
     const step = (maxX - minX) / (targetPoints - 1);
     
-    // 預計算原始數據的相鄰間距，用於自適應權重
     const dxs = [];
     for (let i = 0; i < n - 1; i++) {
         dxs.push(Math.max(xs[i+1] - xs[i], 0.001));
@@ -276,16 +297,13 @@ function smoothCurve(xs, ys) {
         const t = minX + i * step;
         xnew.push(t);
         
-        // 使用 Catmull-Rom 樣條插值 (自適應權重，產生圓頂效果)
         let y = 0;
         let totalWeight = 0;
         
-        // 自適應帶寬：在數據點密集時使用較小的帶寬，稀疏時使用較大的帶寬
         const avgDx = dxs.reduce((a, b) => a + b, 0) / dxs.length;
         const bandwidth = Math.max(3, Math.min(n, Math.max(5, 12 / (avgDx + 0.1))));
         
         for (let j = 0; j < n; j++) {
-            // 使用高斯權重，讓曲線更平滑
             const dx = (t - xs[j]) / (xs[Math.min(n-1, j+1)] - xs[Math.max(0, j-1)] + 0.001);
             const weight = Math.exp(-dx * dx * 2.5);
             y += ys[j] * weight;
@@ -295,7 +313,6 @@ function smoothCurve(xs, ys) {
         if (totalWeight > 0.001) {
             y = Math.max(0, y / totalWeight);
         } else {
-            // fallback: 線性插值
             let idx = 0;
             for (let j = 0; j < n - 1; j++) {
                 if (t >= xs[j] && t <= xs[j+1]) { idx = j; break; }
@@ -321,7 +338,6 @@ function generateIdealCurve() {
     const ys = [...IDEAL_FLOW];
     
     if (xs.length >= 4) {
-        // 先做平滑插值，產生理想曲線的圓頂
         const result = smoothCurve(xs, ys);
         return result;
     }
@@ -392,6 +408,8 @@ class FlowMonitorApp {
         this.setupChart();
         this.refreshPorts();
         this.bindEvents();
+
+        sendLog('頁面載入', { version: '1.0', type: 'Ellita' });
     }
     
     setupChart() {
@@ -520,6 +538,7 @@ class FlowMonitorApp {
             }
             this.portSelect.selectedIndex = 0;
             this.statusMsg.textContent = `Found ${ports.length} port(s)`;
+            sendLog('刷新埠列表', { count: ports.length });
         } catch (e) {
             this.statusMsg.textContent = `Error: ${e.message}`;
         }
@@ -546,6 +565,7 @@ class FlowMonitorApp {
                 const newPort = await navigator.serial.requestPort();
                 if (!newPort) {
                     this.statusMsg.textContent = '⚠️ No device selected';
+                    sendLog('連線取消', { reason: '使用者取消選擇裝置' });
                     return;
                 }
                 ports = await navigator.serial.getPorts();
@@ -574,11 +594,13 @@ class FlowMonitorApp {
             this.refreshBtn.disabled = true;
             this.statusMsg.textContent = '✅ Connected. Waiting for 2 consecutive Flow=YES to start plotting...';
             
+            sendLog('連線成功');
             this.startReading();
             
         } catch (e) {
             this.statusMsg.textContent = `❌ Connection failed: ${e.message}`;
             console.error('Connection error:', e);
+            sendLog('連線失敗', { error: e.message });
         }
     }
     
@@ -601,6 +623,7 @@ class FlowMonitorApp {
         this.portSelect.disabled = false;
         this.refreshBtn.disabled = false;
         this.statusMsg.textContent = 'Disconnected';
+        sendLog('斷開連線');
     }
     
     async startReading() {
@@ -706,6 +729,7 @@ class FlowMonitorApp {
                 }
                 this.statusMsg.textContent = 'Inhalation detected.';
                 this.prev_flow_yes = flow_yes;
+                sendLog('偵測到吸氣', { flow: est });
                 this.redraw();
                 return;
             }
@@ -729,7 +753,6 @@ class FlowMonitorApp {
         
         const ds = this.chart.data.datasets;
         
-        // 對流量數據做平滑處理，產生圓頂曲線
         let xs = this.times.slice();
         let ys = this.flows.slice();
         
@@ -760,10 +783,12 @@ class FlowMonitorApp {
             this.measureBtn.textContent = 'Stop';
             this.measureBtn.className = 'danger';
             this.statusMsg.textContent = 'Measuring...';
+            sendLog('開始測量', { patientId: this.patientInput.value });
         } else {
             this.measureBtn.textContent = 'Start';
             this.measureBtn.className = '';
             this.statusMsg.textContent = 'Measurement stopped (waveform frozen).';
+            sendLog('停止測量', { recordCount: this.records.length });
         }
     }
     
@@ -786,6 +811,7 @@ class FlowMonitorApp {
         this.updateRecordCount();
         this.peakValue.textContent = '—';
         this.statusMsg.textContent = 'Cleared.';
+        sendLog('清除資料');
     }
     
     saveData() {
@@ -823,6 +849,7 @@ class FlowMonitorApp {
         link.click();
         
         this.statusMsg.textContent = `Saved: ${default_name}.csv (${this.records.length} records)`;
+        sendLog('儲存 CSV', { patient, recordCount: this.records.length });
     }
     
     bindEvents() {
