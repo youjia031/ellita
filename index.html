@@ -227,7 +227,7 @@
 
 <script>
 // ============================================================
-//  Log 功能（跟其他網頁完全一樣的寫法）
+//  Log 功能
 // ============================================================
 async function sendLog(action, data = {}) {
     try {
@@ -273,8 +273,7 @@ const IDEAL_FLOW = [0, 40, 40, 40, 40, 20, 5, 0, 0, 0];
 const IDEAL_DT = 0.5;
 
 // =====================================================
-//  更平滑的曲線 (模擬 scipy make_interp_spline)
-//  產生圓頂效果 (peak rounding)
+//  平滑曲線（強制起點和終點固定）
 // =====================================================
 function smoothCurve(xs, ys) {
     const n = xs.length;
@@ -292,16 +291,28 @@ function smoothCurve(xs, ys) {
     for (let i = 0; i < n - 1; i++) {
         dxs.push(Math.max(xs[i+1] - xs[i], 0.001));
     }
+    const avgDx = dxs.reduce((a, b) => a + b, 0) / dxs.length;
+    const bandwidth = Math.max(3, Math.min(n, Math.max(5, 12 / (avgDx + 0.1))));
+    
+    const firstY = ys[0];
+    const lastY = ys[n - 1];
     
     for (let i = 0; i < targetPoints; i++) {
         const t = minX + i * step;
         xnew.push(t);
         
+        // 強制起點和終點固定在原始值
+        if (i === 0) {
+            ynew.push(firstY);
+            continue;
+        }
+        if (i === targetPoints - 1) {
+            ynew.push(lastY);
+            continue;
+        }
+        
         let y = 0;
         let totalWeight = 0;
-        
-        const avgDx = dxs.reduce((a, b) => a + b, 0) / dxs.length;
-        const bandwidth = Math.max(3, Math.min(n, Math.max(5, 12 / (avgDx + 0.1))));
         
         for (let j = 0; j < n; j++) {
             const dx = (t - xs[j]) / (xs[Math.min(n-1, j+1)] - xs[Math.max(0, j-1)] + 0.001);
@@ -313,6 +324,7 @@ function smoothCurve(xs, ys) {
         if (totalWeight > 0.001) {
             y = Math.max(0, y / totalWeight);
         } else {
+            // fallback: 線性插值
             let idx = 0;
             for (let j = 0; j < n - 1; j++) {
                 if (t >= xs[j] && t <= xs[j+1]) { idx = j; break; }
@@ -331,7 +343,7 @@ function smoothCurve(xs, ys) {
 }
 
 // =====================================================
-//  產生理想曲線（套用平滑）
+//  產生理想曲線
 // =====================================================
 function generateIdealCurve() {
     const xs = IDEAL_FLOW.map((_, i) => i * IDEAL_DT);
